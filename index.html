@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Telugu:wght@400;600&display=swap" rel="stylesheet">
+<title>Delimitation Reality Dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+body { margin:0; font-family: Arial, sans-serif; display:flex; height:100vh; overflow:hidden; }
+body.lang-te { font-family: "Noto Sans Telugu", sans-serif; }
+
+.panel{
+  width:360px; background:rgba(255,255,255,0.92); backdrop-filter: blur(8px);
+  padding:14px; box-shadow:2px 0 18px rgba(0,0,0,0.15); border-right:1px solid rgba(0,0,0,0.06);
+  font-size:13px; overflow-y:auto; -webkit-overflow-scrolling: touch; z-index: 1001;
+}
+
+@media (max-width: 768px){
+  body { flex-direction: column; }
+  #map { height: 100vh; width: 100%; position: absolute; top:0; left:0; }
+  .panel {
+    position: fixed; bottom: 0; left: 0; right: 0; width: 100%; height: 75vh;
+    padding: 25px 14px 14px; border-radius: 16px 16px 0 0;
+    transform: translateY(calc(75vh - 80px)); transition: transform 0.3s ease; touch-action: none;
+  }
+  .panel-handle{
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    width: 40px; height: 5px; background: #bbb; border-radius: 10px;
+  }
+}
+
+#map { flex-grow:1; position: relative; background: #f8f9fa; }
+#toggleBtn{
+  position: fixed; top: 20px; left: 330px; width: 36px; height: 36px;
+  background: #fff; border: 1px solid #ddd; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 9999; transition: left 0.25s;
+}
+
+body.panel-collapsed #toggleBtn { left: 20px; }
+body.panel-collapsed .panel { transform: translateX(-100%); position: absolute; }
+.row{margin-top:6px}
+.small{font-size:11px; opacity:0.8}
+hr{border:none;border-top:1px solid #eee;margin:10px 0}
+button, select { margin-top:8px; width:100%; padding:8px; border-radius:8px; border:1px solid #ddd; }
+.badge{display:inline-block; padding:2px 6px; border-radius:6px; background:#f2f2f2; font-weight: bold;}
+.state-label div { pointer-events:none; text-shadow: 0 0 4px #fff; line-height: 1.1; }
+</style>
+</head>
+
+<body>
+<div id="toggleBtn">⬅</div>
+<div class="panel" id="panel">
+  <div class="panel-handle"></div>
+  <b id="mainTitle">🇮🇳 Delimitation Reality Dashboard</b>
+
+  <div class="row">
+    <select id="mode" onchange="updateMap(true)">
+      <option value="current">Current (543)</option>
+      <option value="uniform">Uniform (850)</option>
+      <option value="y2011">2011 Census (850)</option>
+      <option value="y2026">2026 Projection (850)</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <select id="lang" onchange="setLang(this.value)">
+      <option value="en">English</option>
+      <option value="te">తెలుగు</option>
+    </select>
+  </div>
+
+  <hr><div id="totals"></div><div id="modelName" class="small"></div>
+  <hr><b id="shareTitle">📊 Share</b><div id="share" class="small"></div>
+  <hr><b id="voteTitle">⚖️ Vote Weight</b><div id="vote" class="small"></div>
+  <hr><b id="insightsTitle">🔥 Key Insights</b><div id="insights" class="small"></div>
+  <hr><b id="topMoversTitle">🏆 Top Movers</b><div id="topMovers" class="small"></div>
+  <hr><b id="validationTitle">🧪 Validation</b><div id="validation" class="small"></div>
+  <hr><div class="legend" id="legendBox"></div>
+</div>
+
+<div id="map"></div>
+
+<script>
+// --- DATA & LOGIC ---
+const CURRENT = {"Uttar Pradesh":80,"Maharashtra":48,"West Bengal":42,"Bihar":40,"Tamil Nadu":39,"Madhya Pradesh":29,"Karnataka":28,"Gujarat":26,"Andhra Pradesh":25,"Rajasthan":25,"Odisha":21,"Kerala":20,"Telangana":17,"Assam":14,"Jharkhand":14,"Punjab":13,"Chhattisgarh":11,"Haryana":10,"Delhi":7,"Jammu and Kashmir":5,"Himachal Pradesh":4,"Uttarakhand":5,"Goa":2,"Tripura":2,"Meghalaya":2,"Manipur":2,"Nagaland":1,"Arunachal Pradesh":2,"Mizoram":1,"Sikkim":1,"Andaman and Nicobar Islands":1,"Chandigarh":1,"Ladakh":1,"Lakshadweep":1,"Puducherry":1,"Dadra and Nagar Haveli and Daman and Diu":2};
+const POP_2011 = {"Uttar Pradesh":199812341,"Maharashtra":112374333,"Bihar":104099452,"West Bengal":91276115,"Madhya Pradesh":72626809,"Tamil Nadu":72147030,"Rajasthan":68548437,"Karnataka":61095297,"Gujarat":60439692,"Andhra Pradesh":49577103,"Telangana":35193978,"Odisha":41974218,"Kerala":33406061,"Jharkhand":32988134,"Assam":31205576,"Punjab":27743338,"Chhattisgarh":25545198,"Haryana":25351462,"Himachal Pradesh":6864602,"Uttarakhand":10086292,"Goa":1458545,"Tripura":3673917,"Meghalaya":2966889,"Manipur":2855794,"Nagaland":1978502,"Arunachal Pradesh":1383727,"Mizoram":1097206,"Sikkim":610577};
+const POP_UT = {"Delhi":16787941, "Jammu and Kashmir":12541302, "Ladakh":274000, "Chandigarh":1055450, "Puducherry":1247953, "Lakshadweep":64473, "Andaman and Nicobar Islands":380581, "Dadra and Nagar Haveli and Daman and Diu":586956};
+
+const TELUGU = {"Uttar Pradesh":"ఉత్తర ప్రదేశ్","Maharashtra":"మహారాష్ట్ర","West Bengal":"పశ్చిమ బెంగాల్","Bihar":"బీహార్","Tamil Nadu":"తమిళనాడు","Madhya Pradesh":"మధ్యప్రదేశ్","Karnataka":"కర్ణాటక","Gujarat":"గుజరాత్","Andhra Pradesh":"ఆంధ్ర ప్రదేశ్","Telangana":"తెలంగాణ","Kerala":"కేరళ","Odisha":"ఒడిశా","Rajasthan":"రాజస్థాన్","Punjab":"పంజాబ్","Haryana":"హర్యానా","Delhi":"దిల్లీ","Jammu and Kashmir":"జమ్మూ కాశ్మీర్","Ladakh":"లడఖ్","Assam":"అస్సాం","Jharkhand":"ఝార్ఖండ్","Chhattisgarh":"ఛత్తీస్‌గఢ్","Goa":"గోవా","Tripura":"త్రిపుర","Meghalaya":"మేఘాలయ","Manipur":"మణిపూర్","Nagaland":"నాగాలాండ్","Arunachal Pradesh":"అరుణాచల్ ప్రదేశ్","Mizoram":"మిజోరం","Sikkim":"సిక్కిం","Puducherry":"పుదుచ్చేరి","Lakshadweep":"లక్షద్వీప్","Chandigarh":"చండీగఢ్","Andaman and Nicobar Islands":"అండమాన్ నికోబార్ దీవులు","Dadra and Nagar Haveli and Daman and Diu":"దాద్రా నాగర్ హవేలి & దమన్ దియు"};
+const UI = {
+  en: { total:"Total", model:"Model", gain:"Biggest Gain", loss:"Biggest Loss", gainers:"Top Gainers", losers:"Top Losers", shareTitle:"Share (South vs North)", standard:"Standard (Full)", sensitivity:"Sensitivity (Excl. Delhi/J&K)", south:"South", north:"North", vote:"Vote Weight (Capita/MP)", validation:"Validation", seats:"Seats", modelLabel:"Model", deltaCurrent:"Δ vs Current", deltaUniform:"Δ vs Uniform", legendGain:"Green Border = Gain", legendLoss:"Blue Border = Loss" },
+  te: { total:"మొత్తం", model:"మోడల్", gain:"అత్యధిక లాభం", loss:"అత్యధిక నష్టం", gainers:"లాభపడినవి", losers:"నష్టపోయినవి", shareTitle:"వాటా (దక్షిణం vs ఉత్తరం)", standard:"పూర్తి స్థాయి", sensitivity:"సెన్సిటివిటీ", south:"దక్షిణం", north:"ఉత్తరం", vote:"ఓటు బరువు", validation:"ధృవీకరణ", seats:"సీట్లు", modelLabel:"మోడల్", deltaCurrent:"ప్రస్తుతంతో మార్పు", deltaUniform:"యూనిఫాంతో మార్పు", legendGain:"ఆకుపచ్చ = లాభం", legendLoss:"నీలం = నష్టం" }
+};
+
+function normalizeName(n){
+  const m = {"Jammu & Kashmir":"Jammu and Kashmir", "NCT of Delhi":"Delhi", "Andaman & Nicobar Islands":"Andaman and Nicobar Islands", "Dadra & Nagar Haveli and Daman & Diu":"Dadra and Nagar Haveli and Daman and Diu", "Orissa":"Odisha"};
+  return m[n] || n;
+}
+
+function allocate(pop, total){
+  let sum = Object.values(pop).reduce((a,b)=>a+b,0);
+  let base = {}, rem = [];
+  for(let s in pop){
+    let q = (pop[s]/sum)*total;
+    base[s] = Math.floor(q);
+    rem.push({s, frac: q-base[s]});
+  }
+  let left = total - Object.values(base).reduce((a,b)=>a+b,0);
+  rem.sort((a,b)=>b.frac - a.frac);
+  for(let i=0; i<left; i++) base[rem[i].s]++;
+  return base;
+}
+
+function allocateUT(popUT, target){
+  let base = {};
+  let sum = Object.values(popUT).reduce((a,b)=>a+b,0);
+  let allocated = 0;
+  for(let s in popUT){
+    base[s] = Math.max(1, Math.round((popUT[s]/sum)*target));
+    allocated += base[s];
+  }
+  // Simple adjustment for rounding to hit exactly 35
+  let diff = target - allocated;
+  if(diff !== 0){ base["Delhi"] += diff; }
+  return base;
+}
+
+const UNIFORM_STATES = allocate(POP_2011, 815);
+const UT_FIXED = allocateUT(POP_UT, 35);
+const UNIFORM = {...UNIFORM_STATES, ...UT_FIXED};
+
+function get2026Pop(){
+  let out = {};
+  for(let s in POP_2011){
+    let g = (s==="Uttar Pradesh"||s==="Bihar") ? 1.28 : (s==="Tamil Nadu"||s==="Kerala") ? 1.08 : 1.18;
+    out[s] = Math.round(POP_2011[s]*g);
+  }
+  return out;
+}
+
+const POP_2026 = get2026Pop();
+const MODEL_2011 = {...allocate(POP_2011, 815), ...UT_FIXED};
+const MODEL_2026 = {...allocate(POP_2026, 815), ...UT_FIXED};
+
+// --- MAP INIT ---
+const map = L.map('map', {zoomControl: false}).setView([22, 80], 5);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+let geoLayer, labelLayer = L.layerGroup().addTo(map);
+
+const UT_BOX = {
+  "Delhi":[[28.4,76.9],[28.9,77.5]], "Chandigarh":[[30.6,76.7],[30.8,76.9]],
+  "Puducherry":[[11.8,79.7],[12.0,80.0]], "Lakshadweep":[[10.4,72.5],[10.8,72.8]],
+  "Dadra and Nagar Haveli and Daman and Diu":[[20,72.8],[20.4,73.2]]
+};
+
+fetch('india_states.geojson').then(r=>r.json()).then(geojson=>{
+  geoLayer = L.geoJSON(geojson, {
+    style: { color: "#444", weight: 1, fillOpacity: 0.7 },
+    onEachFeature: (f, l) => {
+      l.on('mouseover', () => l.setStyle({weight: 3}));
+      l.on('mouseout', () => l.setStyle({weight: 1}));
+    }
+  }).addTo(map);
+  updateMap(false);
+  map.on('zoomend', () => addLabels(getData(document.getElementById("mode").value)));
+});
+
+function getData(m){
+  return m==="current" ? CURRENT : m==="uniform" ? UNIFORM : m==="y2011" ? MODEL_2011 : MODEL_2026;
+}
+
+function updateMap(isUserTriggered){
+  const mode = document.getElementById("mode").value;
+  const lang = document.getElementById("lang").value;
+  const data = getData(mode);
+  const u = UI[lang];
+  
+  document.body.className = lang === 'te' ? 'lang-te' : '';
+
+  let diffs = [];
+  geoLayer.eachLayer(l => {
+    const s = normalizeName(l.feature.properties.ST_NM || l.feature.properties.NAME_1);
+    const val = data[s] || 0;
+    const base = (mode === "current") ? val : (mode === "uniform") ? CURRENT[s] : UNIFORM[s];
+    const diff = val - base;
+    if(s in POP_2011) diffs.push({s, diff});
+
+    const border = diff > 0 ? "#00c853" : diff < 0 ? "#1e88e5" : "#444";
+    l.setStyle({ fillColor: getColor(s), color: border, weight: diff !== 0 ? 3 : 1 });
+    
+    let tip = `<b>${lang==='te'?TELUGU[s]||s:s}</b><br>${u.seats}: ${val}`;
+    if(mode !== "current") tip += `<br>${mode==='uniform'?u.deltaCurrent:u.deltaUniform}: ${diff>0?'+':''}${diff}`;
+    l.bindTooltip(tip, {sticky: true});
+  });
+
+  // Calculate Metrics
+  diffs.sort((a,b)=>b.diff - a.diff);
+  const topG = diffs.slice(0,3);
+  const topL = [...diffs].reverse().slice(0,3);
+
+  document.getElementById("totals").innerHTML = `<b>${u.total}:</b> ${mode==='current'?543:850}`;
+  document.getElementById("insights").innerHTML = `${u.gain}: <span class="badge">${lang==='te'?TELUGU[topG[0].s]:topG[0].s}</span>`;
+  
+  if(mode !== "current") {
+    document.getElementById("topMovers").innerHTML = `<b>${u.gainers}</b><br>` + topG.map(x=>`${lang==='te'?TELUGU[x.s]:x.s}: +${x.diff}`).join("<br>");
+  } else {
+    document.getElementById("topMovers").innerHTML = "N/A";
+  }
+
+  addLabels(data);
+  updatePanelText(u, mode, data);
+}
+
+function updatePanelText(u, mode, data){
+  const lang = document.getElementById("lang").value;
+  document.getElementById("shareTitle").innerText = u.shareTitle;
+  document.getElementById("voteTitle").innerText = u.vote;
+  document.getElementById("legendBox").innerHTML = `<div style='color:#00c853'>● ${u.legendGain}</div><div style='color:#1e88e5'>● ${u.legendLoss}</div>`;
+  
+  let check = Object.values(data).reduce((a,b)=>a+b,0);
+  document.getElementById("validation").innerText = `${check} / ${mode==='current'?543:850}`;
+}
+
+function addLabels(data){
+  labelLayer.clearLayers();
+  const zoom = map.getZoom();
+  const lang = document.getElementById("lang").value;
+  const seen = new Set();
+
+  geoLayer.eachLayer(l => {
+    const s = normalizeName(l.feature.properties.ST_NM || l.feature.properties.NAME_1);
+    if(seen.has(s)) return;
+    seen.add(s);
+
+    const val = data[s] || 0;
+    const center = l.getBounds().getCenter();
+    const name = lang === 'te' ? (TELUGU[s] || s) : s;
+
+    if(zoom > 4 || val > 10){
+      L.marker(center, {
+        icon: L.divIcon({
+          className: 'state-label',
+          html: `<div style="text-align:center; font-size:${zoom+4}px"><b>${val}</b><br><small>${zoom > 5 ? name : ''}</small></div>`
+        }),
+        interactive: false
+      }).addTo(labelLayer);
+    }
+  });
+}
+
+function getColor(s){
+  let h = 0; for(let i=0; i<s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
+  return `hsl(${Math.abs(h)%360}, 60%, 80%)`;
+}
+
+function setLang(l){ localStorage.setItem("lang", l); updateMap(true); }
+
+// Mobile Panel Logic
+const panel = document.getElementById("panel");
+let startY, currentTranslate = window.innerHeight * 0.75 - 80;
+panel.addEventListener("touchstart", e => startY = e.touches[0].clientY);
+panel.addEventListener("touchmove", e => {
+  let delta = e.touches[0].clientY - startY;
+  if(delta < 0) panel.style.transform = `translateY(0)`;
+  if(delta > 100) panel.style.transform = `translateY(calc(75vh - 80px))`;
+});
+
+document.getElementById("toggleBtn").onclick = () => {
+  document.body.classList.toggle("panel-collapsed");
+  setTimeout(() => map.invalidateSize(), 300);
+};
+</script>
+</body>
+</html>
