@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Telugu:wght@400;600&display=swap" rel="stylesheet">
+
+<title>Delimitation Reality Dashboard</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+body {
+  margin:0;
+  font-family: Arial, Helvetica, sans-serif;
+  height:100vh;
+  overflow:hidden;
+}
+
+/* FLEX LAYOUT FIX */
+@media (min-width:768px){
+  body{ display:flex; }
+  #panel{
+    width:320px;
+    height:100vh;
+    overflow-y:auto;
+    z-index:1000;
+    background:rgba(255,255,255,0.95);
+  }
+  #map{
+    flex:1;
+    height:100vh;
+  }
+  body.panel-collapsed #panel{
+    transform:translateX(-100%);
+    position:absolute;
+  }
+}
+
+#map{
+  width:100%;
+  height:100%;
+}
+
+.panel{
+  padding:14px;
+}
+
+.state-label div, .ut-label div{
+  pointer-events:none;
+  text-shadow:0 0 4px #fff;
+}
+</style>
+</head>
+
+<body>
+
+<div class="panel" id="panel">
+<b>🇮🇳 Delimitation Reality Dashboard</b>
+
+<select id="mode" onchange="updateMap()">
+<option value="current">Current (543)</option>
+<option value="uniform">Uniform (850)</option>
+<option value="y2011">2011 Census</option>
+<option value="y2026">2026 Projection</option>
+</select>
+
+<select id="lang" onchange="updateMap()">
+<option value="en">English</option>
+<option value="te">తెలుగు</option>
+</select>
+
+<div id="totals"></div>
+</div>
+
+<div id="map"></div>
+
+<script>
+// ================= NORMALIZATION =================
+function normalizeName(name){
+  const map={
+    "Andaman & Nicobar":"Andaman and Nicobar Islands",
+    "Andaman":"Andaman and Nicobar Islands",
+    "Nicobar":"Andaman and Nicobar Islands",
+    "Dadra & Nagar Haveli":"Dadra and Nagar Haveli and Daman and Diu",
+    "Daman & Diu":"Dadra and Nagar Haveli and Daman and Diu",
+    "Dadra Nagar Haveli":"Dadra and Nagar Haveli and Daman and Diu"
+  };
+  return map[name]||name;
+}
+
+// ================= TELUGU =================
+const TELUGU={
+"Andaman and Nicobar Islands":"అండమాన్ నికోబార్ దీవులు",
+"Dadra and Nagar Haveli and Daman and Diu":"దాద్రా నాగర్ హవేలి & దమన్ దియు"
+};
+
+function t(name){
+  return document.getElementById("lang").value==="te"
+  ? (TELUGU[name]||name)
+  : name;
+}
+
+// ================= DATA =================
+const CURRENT={
+"Andaman and Nicobar Islands":1,
+"Dadra and Nagar Haveli and Daman and Diu":2,
+"Delhi":7
+};
+
+// ================= MAP =================
+const map=L.map('map').setView([22.5,80],5);
+
+map.options.zoomSnap=0.25;
+map.options.zoomDelta=0.25;
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+// 🔥 FIX: always keep map stable
+map.on('zoomend moveend resize', ()=>map.invalidateSize());
+
+// ================= UT BOX =================
+const UT_BOX={
+"Andaman and Nicobar Islands":[[6.5,92],[14,94]],
+"Dadra and Nagar Haveli and Daman and Diu":[[20,72.8],[20.4,73.2]],
+"Delhi":[[28.4,76.9],[28.9,77.5]]
+};
+
+let labelLayer=L.layerGroup().addTo(map);
+let utLayer=L.layerGroup().addTo(map);
+
+// ================= LABELS =================
+function addLabels(data){
+  labelLayer.clearLayers();
+  let lang=document.getElementById("lang").value;
+
+  for(let s in UT_BOX){
+    let bounds=UT_BOX[s];
+    let center=[
+      (bounds[0][0]+bounds[1][0])/2,
+      (bounds[0][1]+bounds[1][1])/2
+    ];
+
+    let val=(data[s]!==undefined)?data[s]:(CURRENT[s]||0);
+
+    let primary=lang==="te"?t(s):s;
+    let secondary=lang==="te"?s:t(s);
+
+    let name=`
+    <div style="text-align:center;font-weight:600;">
+      ${primary}
+      <div style="font-size:10px;opacity:0.8">${secondary}</div>
+      <b>${val}</b>
+    </div>
+    `;
+
+    L.marker(center,{
+      icon:L.divIcon({className:"ut-label",html:name})
+    }).addTo(labelLayer);
+  }
+}
+
+// ================= UPDATE =================
+function updateMap(){
+  let data=CURRENT;
+
+  utLayer.clearLayers();
+
+  for(let s in UT_BOX){
+    let val=(data[s]!==undefined)?data[s]:(CURRENT[s]||0);
+
+    L.rectangle(UT_BOX[s],{
+      color:"#333",
+      weight:2
+    }).addTo(utLayer)
+    .bindTooltip(`${s}<br>Seats: ${val}`);
+  }
+
+  addLabels(data);
+
+  document.getElementById("totals").innerHTML="Total: 543";
+}
+
+// ================= LOAD GEO =================
+fetch('india_states.geojson')
+.then(r=>r.json())
+.then(g=>{
+  L.geoJSON(g,{
+    style:{color:"#333",weight:1,fillOpacity:0.6}
+  }).addTo(map);
+
+  updateMap();
+});
+
+</script>
+</body>
+</html>
