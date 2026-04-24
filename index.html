@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Telugu:wght@400;600&display=swap" rel="stylesheet">
+
+<title>Delimitation Reality Dashboard</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+body {
+  margin:0;
+  font-family: Arial, Helvetica, sans-serif;
+  display:flex;
+  height:100vh;
+  overflow:hidden;
+}
+
+body.lang-te {
+  font-family: "Noto Sans Telugu", "Noto Sans", Arial, sans-serif;
+}
+
+/* LEFT PANEL */
+.panel{
+  width:360px;
+  background:rgba(255,255,255,0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding:14px;
+  border-radius:0;
+  box-shadow:2px 0 18px rgba(0,0,0,0.15);
+  border-right:1px solid rgba(0,0,0,0.06);
+  font-size:13px;
+  overflow-y:auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ================== TELUGU MODE ================== */
+body.lang-te .panel {
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: 0.2px;
+}
+body.lang-te b { display: inline-block; margin-bottom: 4px; }
+body.lang-te .small { font-size: 12px; line-height: 1.6; }
+
+/* ================== MOBILE APP LAYOUT ================== */
+@media (max-width: 768px){
+  body { flex-direction: column; }
+  #map { height: 100vh; width: 100%; position: absolute; top:0; left:0; }
+  
+  .panel {
+    position: fixed;   
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: 75vh;
+    padding: 25px 14px 14px;
+    background: rgba(255,255,255,0.95);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 20px rgba(0,0,0,0.15);
+    z-index: 1000;
+    transform: translateY(calc(75vh - 80px)); 
+    transition: transform 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+    touch-action: none; /* Controlled by JS */
+  }
+  .panel-handle{
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 5px;
+    background: #bbb;
+    border-radius: 10px;
+  }
+  #toggleBtn { display: none; }
+}
+
+#toggleBtn{
+  position: fixed;        
+  top: 20px; left: 10px;             
+  width: 36px; height: 36px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 50%;
+  display: flex;
+  align-items: center; justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  z-index: 9999;
+}
+
+.row{margin-top:6px}
+.small{font-size:11px; opacity:0.8}
+hr{border:none;border-top:1px solid #eee;margin:10px 0}
+.legend{font-size:11px; margin-top:8px}
+.badge{display:inline-block; padding:2px 6px; border-radius:6px; background:#f2f2f2}
+
+button, select {
+  margin-top:8px; width:100%; padding:8px; border-radius:8px;
+  border:1px solid #ddd; background:#fafafa; cursor:pointer;
+}
+
+#map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; transition: left 0.25s ease; }
+
+@media (min-width: 768px){
+  #panel{
+    position: absolute; top: 0; left: 0; bottom: auto;
+    width: 320px; height: 100vh; overflow-y: auto;
+    z-index: 1000; border-radius: 0;
+    transform: translateX(0) !important; 
+  }
+  #map{ left: 320px; }
+  body.panel-collapsed #panel { transform: translateX(-100%) !important; }
+  body.panel-collapsed #map { left: 0; }
+}
+
+.state-label div, .ut-label div{
+  pointer-events:none; white-space:nowrap; display:block; padding:1px 2px;
+  text-shadow: 0 0 4px rgba(255,255,255,0.9);
+}
+</style>
+</head>
+
+<body>
+<div id="toggleBtn">⬅</div>
+<div class="panel" id="panel">
+  <div class="panel-handle" id="dragHandle"></div>
+  <b>🇮🇳 Delimitation Reality Dashboard</b>
+
+  <div class="row">
+    <select id="mode" onchange="updateMap(true)">
+      <option value="current">Current (543)</option>
+      <option value="uniform">Uniform (850)</option>
+      <option value="y2011">2011 Census</option>
+      <option value="y2026">2026 Projection</option>
+    </select>
+  </div>
+
+  <div class="row small">Language</div>
+  <div class="row">
+    <select id="lang" onchange="setLang(this.value)">
+      <option value="en">English</option>
+      <option value="te">తెలుగు</option>
+    </select>
+  </div>
+
+  <hr><div id="totals"></div><div id="modelNameDisplay" class="small"></div>
+  <hr><b id="shareTitle">📊 Share</b><div id="share" class="small"></div>
+  <hr><b id="voteTitle">⚖️ Vote Weight</b><div id="vote" class="small"></div>
+  <hr><b id="insightsTitle">🔥 Key Insights</b><div id="insights" class="small"></div>
+  <hr><b id="topMoversTitle">🏆 Top Movers</b><div id="topMovers" class="small"></div>
+  <hr><b id="validationTitle">🧪 Validation</b><div id="validation" class="small"></div>
+  <hr><div class="legend" id="legendBox"></div>
+</div>
+
+<div id="map"></div>
+
+<script>
+// ================== DATA & LOGIC ==================
+function normalizeName(name){
+  let n = (name||"").trim();
+  const map = {
+    "Jammu & Kashmir":"Jammu and Kashmir", "NCT of Delhi":"Delhi",
+    "Andaman & Nicobar Islands":"Andaman and Nicobar Islands",
+    "Andaman & Nicobar":"Andaman and Nicobar Islands",
+    "Andaman":"Andaman and Nicobar Islands", "Nicobar":"Andaman and Nicobar Islands",
+    "Dadra & Nagar Haveli and Daman & Diu":"Dadra and Nagar Haveli and Daman and Diu",
+    "Orissa":"Odisha"
+  };
+  return map[n] || n;
+}
+
+const TELUGU = {
+  "Uttar Pradesh":"ఉత్తర ప్రదేశ్","Maharashtra":"మహారాష్ట్ర","West Bengal":"పశ్చిమ బెంగాల్",
+  "Bihar":"బీహార్","Tamil Nadu":"తమిళనాడు","Madhya Pradesh":"మధ్యప్రదేశ్",
+  "Karnataka":"కర్ణాటక","Gujarat":"గుజరాత్","Andhra Pradesh":"ఆంధ్ర ప్రదేశ్",
+  "Telangana":"తెలంగాణ","Kerala":"కేరళ","Odisha":"ఒడిశా","Rajasthan":"రాజస్థాన్",
+  "Punjab":"పంజాబ్","Haryana":"హర్యానా","Delhi":"దిల్లీ","Jammu and Kashmir":"జమ్మూ కాశ్మీర్",
+  "Ladakh":"లడఖ్","Assam":"అస్సాం","Jharkhand":"ఝార్ఖండ్","Chhattisgarh":"ఛత్తీస్‌గఢ్",
+  "Goa":"గోవా","Tripura":"త్రిపుర","Meghalaya":"మేఘాలయ","Manipur":"మణిపూర్",
+  "Nagaland":"నాగాలాండ్","Arunachal Pradesh":"అరుణాచల్ ప్రదేశ్","Mizoram":"మిజోరం",
+  "Sikkim":"సిక్కిం","Puducherry":"పుదుచ్చేరి","Lakshadweep":"లక్షద్వీప్",
+  "Chandigarh":"చండీగఢ్","Andaman and Nicobar Islands":"అండమాన్ నికోబార్ దీవులు",
+  "Dadra and Nagar Haveli and Daman and Diu":"దాద్రా నాగర్ హవేలి & దమన్ దియు"
+};
+
+function t(name){
+  let lang = document.getElementById("lang")?.value || "en";
+  if(lang === "te") return TELUGU[name] || name;
+  return name;
+}
+
+const UI = {
+  en: {
+    total:"Total", model:"Model", gain:"Biggest Gain", loss:"Biggest Loss",
+    gainers:"Top Gainers", losers:"Top Losers", shareTitle:"Share (South vs North)",
+    standard:"Standard (incl Delhi & J&K)", sensitivity:"Sensitivity (excl Delhi & J&K)",
+    south:"South", north:"North", vote:"Vote Weight (people per MP)", validation:"Validation",
+    seats:"Seats", modelLabel:"Model", deltaCurrent:"Δ vs Current", deltaUniform:"Δ vs Uniform",
+    share:"Share", shareDelta:"Share Δ", legendGain:"Border = Gain vs baseline",
+    legendLoss:"Border = Loss vs baseline", legendFill:"Fill = State identity",
+    legendBase:"Baseline: Uniform vs Current | 2011/2026 vs Uniform"
+  },
+  te: {
+    total:"మొత్తం", model:"మోడల్", gain:"అత్యధిక లాభం", loss:"అత్యధిక నష్టం",
+    gainers:"లాభపడిన రాష్ట్రాలు", losers:"నష్టపోయిన రాష్ట్రాలు", shareTitle:"వాటా (దక్షిణం vs ఉత్తరం)",
+    standard:"సాధారణ (దిల్లీ & జమ్మూ కాశ్మీర్‌తో)", sensitivity:"సెన్సిటివిటీ (దిల్లీ & జమ్మూ కాశ్మీర్ లేకుండా)",
+    south:"దక్షిణం", north:"ఉత్తరం", vote:"ఓటు బరువు (ప్రతి ఎంపీకి జనాభా)", validation:"ధృవీకరణ",
+    seats:"సీట్లు", modelLabel:"మోడల్", deltaCurrent:"ప్రస్తుతంతో మార్పు", deltaUniform:"సమాన పంపిణీతో మార్పు",
+    share:"వాటా", shareDelta:"వాటా మార్పు", legendGain:"సరిహద్దు = లాభం", legendLoss:"సరిహద్దు = నష్టం",
+    legendFill:"రంగు = రాష్ట్రం", legendBase:"ఆధారం: సమాన పంపిణీ vs ప్రస్తుత"
+  }
+};
+
+function ui(){ return UI[document.getElementById("lang")?.value || "en"]; }
+
+function getColor(state){
+ let hash = 0;
+ for(let i=0;i<state.length;i++){ hash = state.charCodeAt(i) + ((hash<<5)-hash); }
+ let hue = (hash % 360 + 360) % 360;
+ return `hsl(${hue},45%,70%)`;
+}
+
+const CURRENT = {"Uttar Pradesh":80,"Maharashtra":48,"West Bengal":42,"Bihar":40,"Tamil Nadu":39,"Madhya Pradesh":29,"Karnataka":28,"Gujarat":26,"Andhra Pradesh":25,"Rajasthan":25,"Odisha":21,"Kerala":20,"Telangana":17,"Assam":14,"Jharkhand":14,"Punjab":13,"Chhattisgarh":11,"Haryana":10,"Delhi":7,"Jammu and Kashmir":5,"Himachal Pradesh":4,"Uttarakhand":5,"Goa":2,"Tripura":2,"Meghalaya":2,"Manipur":2,"Nagaland":1,"Arunachal Pradesh":2,"Mizoram":1,"Sikkim":1,"Andaman and Nicobar Islands":1,"Chandigarh":1,"Ladakh":1,"Lakshadweep":1,"Puducherry":1,"Dadra and Nagar Haveli and Daman and Diu":2};
+const POP_2011 = {"Uttar Pradesh":199812341,"Maharashtra":112374333,"Bihar":104099452,"West Bengal":91276115,"Madhya Pradesh":72626809,"Tamil Nadu":72147030,"Rajasthan":68548437,"Karnataka":61095297,"Gujarat":60439692,"Andhra Pradesh":49577103,"Telangana":35193978,"Odisha":41974218,"Kerala":33406061,"Jharkhand":32988134,"Assam":31205576,"Punjab":27743338,"Chhattisgarh":25545198,"Haryana":25351462,"Himachal Pradesh":6864602,"Uttarakhand":10086292,"Goa":1458545,"Tripura":3673917,"Meghalaya":2966889,"Manipur":2855794,"Nagaland":1978502,"Arunachal Pradesh":1383727,"Mizoram":1097206,"Sikkim":610577};
+const POP_UT = {"Delhi":16787941, "Jammu and Kashmir":12541302, "Ladakh":274000, "Chandigarh":1055450, "Puducherry":1247953, "Lakshadweep":64473, "Andaman and Nicobar Islands":380581, "Dadra and Nagar Haveli and Daman and Diu":586956};
+
+const TOTAL_850 = 850, UT_TOTAL = 35, STATE_TOTAL = 815;
+const SOUTH = ["Tamil Nadu","Kerala","Karnataka","Andhra Pradesh","Telangana"];
+const EXCLUDE_SENSITIVITY = ["Delhi","Jammu and Kashmir"];
+
+function allocate(pop,total){
+  let sum=Object.values(pop).reduce((a,b)=>a+b,0);
+  let base={},rem=[];
+  for(let s in pop){ let q=(pop[s]/sum)*total; base[s]=Math.floor(q); rem.push({s,frac:q-base[s]}); }
+  let left=total-Object.values(base).reduce((a,b)=>a+b,0);
+  rem.sort((a,b)=>b.frac-a.frac);
+  for(let i=0;i<left;i++) base[rem[i].s]++;
+  return base;
+}
+
+function buildUTModel(popBase){
+  let sum = Object.values(popBase).reduce((a,b)=>a+b,0);
+  let ratio = sum / STATE_TOTAL;
+  let base = {}; let rem = []; let used = 0;
+  for(let s in POP_UT){
+    base[s] = CURRENT[s] || 1; used += base[s];
+    rem.push({s, frac: POP_UT[s]/ratio});
+  }
+  let remaining = UT_TOTAL - used;
+  rem.sort((a,b)=>b.frac - a.frac);
+  let i = 0;
+  while(remaining > 0){ base[rem[i % rem.length].s]++; remaining--; i++; }
+  return base;
+}
+
+function project2026(){
+  let out={};
+  for(let s in POP_2011){
+    let g=1.18; if(s==="Uttar Pradesh"||s==="Bihar") g=1.25; if(s==="Tamil Nadu"||s==="Kerala") g=1.08;
+    out[s]=Math.round(POP_2011[s]*g);
+  }
+  return out;
+}
+
+const MODEL_2011 = {...allocate(POP_2011, STATE_TOTAL), ...buildUTModel(POP_2011)};
+const POP_2026 = project2026();
+const MODEL_2026 = {...allocate(POP_2026, STATE_TOTAL), ...buildUTModel(POP_2026)};
+const UNIFORM = {...allocate(POP_2011, STATE_TOTAL), ...buildUTModel(POP_2011)}; // Base Uniform logic
+
+// ================== MAP ==================
+const map = L.map('map',{zoomControl:true, attributionControl:false}).setView([22.5,80],5);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+let geoLayer, utLayer = L.layerGroup().addTo(map), labelLayer = L.layerGroup().addTo(map);
+const UT_BOX={"Delhi":[[28.4,76.9],[28.9,77.5]], "Chandigarh":[[30.6,76.7],[30.8,76.9]], "Puducherry":[[11.8,79.7],[12.0,80.0]], "Lakshadweep":[[10.4,72.5],[10.8,72.8]], "Ladakh":[[33.5,76],[35.5,79]], "Dadra and Nagar Haveli and Daman and Diu":[[20,72.8],[20.4,73.2]]};
+const LABEL_CENTERS = {"Kerala": [10.5, 76.5], "Andhra Pradesh": [16.0, 79.5], "Andaman and Nicobar Islands": [11.5, 92.7]};
+
+fetch('india_states.geojson').then(r=>r.json()).then(g=>{
+  geoLayer = L.geoJSON(g,{
+    onEachFeature:(f,l)=>{
+      l.setStyle({color:"#333", weight:1, fillColor:"#ccc", fillOpacity:0.6});
+    }
+  }).addTo(map);
+  updateMap(false);
+  map.on("zoomend", () => addLabels(getData(document.getElementById("mode").value)));
+  if(window.innerWidth < 768) initDragPanel();
+});
+
+function getData(m){
+  if(m==="current") return CURRENT; if(m==="uniform") return UNIFORM;
+  if(m==="y2011") return MODEL_2011; return MODEL_2026;
+}
+
+function setLang(lang){
+  localStorage.setItem("lang", lang);
+  updateMap(false);
+}
+
+function addLabels(data){
+  labelLayer.clearLayers();
+  let zoom = map.getZoom(); let seen = new Set();
+  let lang = document.getElementById("lang").value;
+
+  geoLayer.eachLayer(layer=>{
+    let raw = layer.feature.properties.ST_NM || layer.feature.properties.NAME_1;
+    let s = normalizeName(raw);
+    if(seen.has(s)) return; seen.add(s);
+
+    let center = LABEL_CENTERS[s] ? L.latLng(LABEL_CENTERS[s]) : layer.getBounds().getCenter();
+    let val = data[s] || 0;
+    let name = lang === "te" ? t(s) : s;
+
+    L.marker(center,{
+      interactive:false,
+      icon: L.divIcon({
+        className:"state-label",
+        html: `<div style="text-align:center; font-weight:600; font-size:${zoom>5?'12px':'10px'}">${name}<br><b>${val}</b></div>`
+      })
+    }).addTo(labelLayer);
+  });
+}
+
+function updateMap(flag){
+  let mode = document.getElementById("mode").value;
+  let data = getData(mode);
+  let lang = document.getElementById("lang").value;
+  let u = ui();
+
+  geoLayer.eachLayer(layer=>{
+    let s = normalizeName(layer.feature.properties.ST_NM || layer.feature.properties.NAME_1);
+    let val = data[s] || 0;
+    let base = (mode==="uniform") ? CURRENT[s] : UNIFORM[s];
+    let diff = val - (base||0);
+    let border = diff > 0 ? "#00c853" : diff < 0 ? "#1e88e5" : "#999";
+    
+    layer.setStyle({fillColor:getColor(s), fillOpacity:0.8, color:border, weight:2});
+    layer.bindTooltip(`<b>${t(s)}</b>: ${val}`, {sticky:true});
+  });
+
+  // UT Boxes
+  utLayer.clearLayers();
+  for(let s in UT_BOX){
+    let rect = L.rectangle(UT_BOX[s], {color:"#333", weight:1, fillColor:getColor(s), fillOpacity:0.8}).addTo(utLayer);
+    rect.bindTooltip(`<b>${t(s)}</b>: ${data[s]||0}`, {sticky:true});
+  }
+
+  addLabels(data);
+  updatePanel(data, mode, u);
+}
+
+function updatePanel(data, mode, u){
+  let lang = document.getElementById("lang").value;
+  let total = mode === "current" ? 543 : 850;
+  
+  document.getElementById("totals").innerHTML = `<b>${u.total}:</b> ${total}`;
+  document.getElementById("modelNameDisplay").innerHTML = `<b>${u.modelLabel}:</b> ${mode}`;
+  
+  // Calculate Gains/Losses
+  let diffs = [];
+  for(let s in data){
+    let base = (mode==="uniform") ? (CURRENT[s]||0) : (UNIFORM[s]||0);
+    diffs.push({s, diff: data[s]-base});
+  }
+  diffs.sort((a,b)=>b.diff - a.diff);
+  
+  document.getElementById("insights").innerHTML = `${u.gain}: <span class="badge">${t(diffs[0].s)}</span>`;
+  document.getElementById("topMovers").innerHTML = diffs.slice(0,3).map(x=>`${t(x.s)}: +${x.diff}`).join("<br>");
+  
+  // Share
+  let south = 0, sum = 0;
+  for(let s in data){ if(POP_2011[s]) { sum+=data[s]; if(SOUTH.includes(s)) south+=data[s]; }}
+  let share = (south/sum*100).toFixed(1);
+  document.getElementById("share").innerHTML = `${u.south}: ${share}% | ${u.north}: ${(100-share).toFixed(1)}%`;
+  
+  // Validation
+  let check = Object.values(data).reduce((a,b)=>a+b,0);
+  document.getElementById("validation").innerHTML = `${check} / ${total} ${check===total?'✔':'❌'}`;
+}
+
+// Fixed Mobile Sliding Logic
+function initDragPanel(){
+  const panel = document.getElementById("panel");
+  const handle = document.getElementById("dragHandle");
+  let startY, startTranslate;
+  let panelHeight = window.innerHeight * 0.75;
+  let collapsedY = panelHeight - 80;
+  let currentY = collapsedY;
+
+  function setPos(y) {
+    currentY = Math.max(0, Math.min(y, collapsedY));
+    panel.style.transform = `translateY(${currentY}px)`;
+  }
+
+  handle.addEventListener('touchstart', e => {
+    startY = e.touches[0].clientY;
+    startTranslate = currentY;
+    panel.style.transition = 'none';
+  });
+
+  window.addEventListener('touchmove', e => {
+    if (startY === undefined) return;
+    let delta = e.touches[0].clientY - startY;
+    setPos(startTranslate + delta);
+  }, {passive: false});
+
+  window.addEventListener('touchend', () => {
+    startY = undefined;
+    panel.style.transition = 'transform 0.3s ease';
+    setPos(currentY > collapsedY / 2 ? collapsedY : 0);
+  });
+  
+  setPos(collapsedY);
+}
+
+document.getElementById("toggleBtn").onclick = function(){
+  document.body.classList.toggle('panel-collapsed');
+  this.innerHTML = document.body.classList.contains('panel-collapsed') ? "➡" : "⬅";
+  setTimeout(()=>map.invalidateSize(), 300);
+};
+</script>
+</body>
+</html>
