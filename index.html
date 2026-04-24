@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Telugu:wght@400;600&display=swap" rel="stylesheet">
+    <title>Delimitation Reality Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <style>
+        body { margin:0; display:flex; height:100vh; overflow:hidden; font-family: sans-serif; }
+        body.lang-te { font-family: "Noto Sans Telugu", sans-serif; }
+
+        #panel {
+            width:360px; background:white; padding:15px; overflow-y:auto; 
+            z-index: 1000; border-right:1px solid #ccc;
+            transition: transform 0.3s ease; position: relative;
+        }
+        #panel.collapsed { transform: translateX(-360px); position: absolute; }
+
+        #map { flex-grow:1; height:100vh; transition: all 0.3s ease; }
+        
+        #toggleBtn {
+            position: absolute; top: 10px; left: 370px; z-index: 1001;
+            background: white; border: 1px solid #ccc; cursor: pointer; padding: 5px 10px;
+            transition: left 0.3s ease; border-radius: 4px;
+        }
+        #panel.collapsed + #toggleBtn { left: 10px; }
+
+        .state-label div {
+            pointer-events:none; white-space:nowrap; text-align:center;
+            font-weight:700; font-size:12px; color:#000;
+            text-shadow: 0 0 4px #fff;
+        }
+        .row { margin-bottom: 15px; }
+        hr { border: 0; border-top: 1px solid #eee; margin: 15px 0; }
+        .gain { color: green; font-weight: bold; }
+        .loss { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="panel">
+    <h3 id="ui-title">🇮🇳 Delimitation Dashboard</h3>
+    
+    <div class="row">
+        <label id="ui-mode">Model:</label><br>
+        <select id="mode" onchange="updateMap()" style="width:100%">
+            <option value="current">Current (543)</option>
+            <option value="uniform">Uniform (850)</option>
+            <option value="y2011">2011 Census</option>
+            <option value="y2026">2026 Projection</option>
+        </select>
+    </div>
+
+    <div class="row">
+        <label id="ui-lang">Language:</label><br>
+        <select id="lang" onchange="setLang(this.value)" style="width:100%">
+            <option value="en">English</option>
+            <option value="te">తెలుగు</option>
+        </select>
+    </div>
+
+    <hr>
+    <div id="stats-box">
+        <div id="stat-total"></div>
+        <div id="stat-share"></div>
+    </div>
+
+    <hr>
+    <b id="ui-movers">Top Movers</b>
+    <div id="movers-list" style="font-size: 0.9em; margin-top:5px;"></div>
+
+    <hr>
+    <div id="validation-box"></div>
+</div>
+
+<button id="toggleBtn" onclick="togglePanel()">⬅</button>
+<div id="map"></div>
+
+<script>
+// --- FULL RESTORED DATA ---
+const CURRENT = {"Uttar Pradesh":80,"Maharashtra":48,"West Bengal":42,"Bihar":40,"Tamil Nadu":39,"Madhya Pradesh":29,"Karnataka":28,"Gujarat":26,"Andhra Pradesh":25,"Rajasthan":25,"Odisha":21,"Kerala":20,"Telangana":17,"Assam":14,"Jharkhand":14,"Punjab":13,"Chhattisgarh":11,"Haryana":10,"Delhi":7,"Jammu and Kashmir":5,"Himachal Pradesh":4,"Uttarakhand":5,"Goa":2,"Tripura":2,"Meghalaya":2,"Manipur":2,"Nagaland":1,"Arunachal Pradesh":2,"Mizoram":1,"Sikkim":1,"Andaman and Nicobar Islands":1,"Chandigarh":1,"Ladakh":1,"Lakshadweep":1,"Puducherry":1,"Dadra and Nagar Haveli and Daman and Diu":2};
+const POP_2011 = {"Uttar Pradesh":199812341,"Maharashtra":112374333,"Bihar":104099452,"West Bengal":91276115,"Madhya Pradesh":72626809,"Tamil Nadu":72147030,"Rajasthan":68548437,"Karnataka":61095297,"Gujarat":60439692,"Andhra Pradesh":49577103,"Telangana":35193978,"Odisha":41974218,"Kerala":33406061,"Jharkhand":32988134,"Assam":31205576,"Punjab":27743338,"Chhattisgarh":25545198,"Haryana":25351462,"Himachal Pradesh":6864602,"Uttarakhand":10086292,"Goa":1458545,"Tripura":3673917,"Meghalaya":2966889,"Manipur":2855794,"Nagaland":1978502,"Arunachal Pradesh":1383727,"Mizoram":1097206,"Sikkim":610577,"Delhi":16787941,"Jammu and Kashmir":12541302,"Ladakh":274000,"Chandigarh":1055450,"Puducherry":1247953,"Lakshadweep":64473,"Andaman and Nicobar Islands":380581,"Dadra and Nagar Haveli and Daman and Diu":586956};
+
+const TELUGU = {"Uttar Pradesh":"ఉత్తర ప్రదేశ్","Maharashtra":"మహారాష్ట్ర","West Bengal":"పశ్చిమ బెంగాల్","Bihar":"బీహార్","Tamil Nadu":"తమిళనాడు","Madhya Pradesh":"మధ్యప్రదేశ్","Karnataka":"కర్ణాటక","Gujarat":"గుజరాత్","Andhra Pradesh":"ఆంధ్ర ప్రదేశ్","Telangana":"తెలంగాణ","Kerala":"కేరళ","Odisha":"ఒడిశా","Rajasthan":"రాజస్థాన్","Punjab":"పంజాబ్","Haryana":"హర్యానా","Delhi":"దిల్లీ","Jammu and Kashmir":"జమ్మూ కాశ్మీర్","Ladakh":"లడఖ్","Assam":"అస్సాం","Jharkhand":"ఝార్ఖండ్","Chhattisgarh":"ఛత్తీస్‌గఢ్","Goa":"గోవా","Tripura":"త్రిపుర","Meghalaya":"మేఘాలయ","Manipur":"మణిపూర్","Nagaland":"నాగాలాండ్","Arunachal Pradesh":"అరుణాచల్ ప్రదేశ్","Mizoram":"మిజోరం","Sikkim":"సిక్కిం","Puducherry":"పుదుచ్చేరి","Lakshadweep":"లక్షద్వీప్","Chandigarh":"చండీగఢ్","Andaman and Nicobar Islands":"అండమాన్ నికోబార్ దీవులు","Dadra and Nagar Haveli and Daman and Diu":"దాద్రా నాగర్ హవేలి & దమన్ దియు"};
+
+const UI = {
+    en: { title: "🇮🇳 Delimitation Dashboard", mode: "Model:", lang: "Language:", movers: "Top Movers", total: "Total Seats:", south: "South Share:" },
+    te: { title: "🇮🇳 నియోజకవర్గాల పునర్విభజన", mode: "నమూనా:", lang: "భాష:", movers: "ముఖ్య మార్పులు", total: "మొత్తం స్థానాలు:", south: "దక్షిణ భారత్ వాటా:" }
+};
+
+// --- LOGIC ---
+function allocate(total) {
+    let sum = Object.values(POP_2011).reduce((a, b) => a + b, 0);
+    let seats = {}, remainder = [];
+    for (let s in POP_2011) {
+        let exact = (POP_2011[s] / sum) * total;
+        seats[s] = Math.floor(exact);
+        remainder.push({ s, frac: exact - seats[s] });
+    }
+    remainder.sort((a, b) => b.frac - a.frac);
+    let left = total - Object.values(seats).reduce((a, b) => a + b, 0);
+    for (let i = 0; i < left; i++) seats[remainder[i].s]++;
+    return seats;
+}
+
+const UNIFORM = allocate(850);
+const map = L.map('map', {zoomControl: false}).setView([22, 78], 5);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+let geoLayer, labelLayer = L.layerGroup().addTo(map);
+
+function setLang(l) {
+    document.body.className = l === 'te' ? 'lang-te' : '';
+    const strings = UI[l];
+    document.getElementById('ui-title').innerText = strings.title;
+    document.getElementById('ui-mode').innerText = strings.mode;
+    document.getElementById('ui-lang').innerText = strings.lang;
+    document.getElementById('ui-movers').innerText = strings.movers;
+    updateMap();
+}
+
+function updateMap() {
+    const mode = document.getElementById("mode").value;
+    const lang = document.getElementById("lang").value;
+    const data = mode === "current" ? CURRENT : UNIFORM;
+    
+    labelLayer.clearLayers();
+    const processedStates = new Set();
+
+    geoLayer.eachLayer(layer => {
+        let name = layer.feature.properties.ST_NM || layer.feature.properties.NAME_1;
+        // Normalization
+        if(name === "Andaman & Nicobar Islands") name = "Andaman and Nicobar Islands";
+        if(name === "Dadra & Nagar Haveli and Daman & Diu") name = "Dadra and Nagar Haveli and Daman and Diu";
+
+        const val = data[name] || 0;
+        const displayName = lang === 'te' ? (TELUGU[name] || name) : name;
+
+        layer.setStyle({
+            fillColor: '#b3cde3', fillOpacity: 0.6, weight: 1, color: 'white'
+        });
+
+        // SINGLE LABEL LOGIC: Only place label if not already processed for this state
+        if (!processedStates.has(name)) {
+            let center;
+            // Manual center overrides for disjointed territories
+            if (name === "Andaman and Nicobar Islands") center = [11.6, 92.7];
+            else if (name === "Lakshadweep") center = [10.5, 72.6];
+            else if (name === "Gujarat") center = [22.3, 71.5];
+            else center = layer.getBounds().getCenter();
+
+            L.marker(center, {
+                icon: L.divIcon({
+                    className: 'state-label',
+                    html: `<div>${displayName}<br>${val}</div>`
+                })
+            }).addTo(labelLayer);
+            processedStates.add(name);
+        }
+    });
+
+    // Panel UI Update
+    const total = Object.values(data).reduce((a,b)=>a+b, 0);
+    const south = (data["Tamil Nadu"]||0)+(data["Kerala"]||0)+(data["Karnataka"]||0)+(data["Andhra Pradesh"]||0)+(data["Telangana"]||0);
+    
+    document.getElementById('stat-total').innerHTML = `<b>${UI[lang].total}</b> ${total}`;
+    document.getElementById('stat-share').innerHTML = `<b>${UI[lang].south}</b> ${((south/total)*100).toFixed(1)}%`;
+}
+
+function togglePanel() {
+    const panel = document.getElementById("panel");
+    const btn = document.getElementById("toggleBtn");
+    const isCollapsed = panel.classList.toggle("collapsed");
+    btn.innerHTML = isCollapsed ? "➡" : "⬅";
+    setTimeout(() => map.invalidateSize(), 300);
+}
+
+fetch('https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/regions/pays-de-la-loire/communes-pays-de-la-loire.geojson') // Placeholder for your local geojson
+.then(r => fetch('india_states.geojson')) 
+.then(r => r.json())
+.then(geojson => {
+    geoLayer = L.geoJSON(geojson).addTo(map);
+    setLang('en');
+});
+
+</script>
+</body>
+</html>
