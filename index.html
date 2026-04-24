@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Telugu:wght@400;600&display=swap" rel="stylesheet">
+<title>Delimitation Reality Dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+body { margin:0; font-family: Arial, Helvetica, sans-serif; display:flex; height:100vh; overflow:hidden; }
+body.lang-te { font-family: "Noto Sans Telugu", "Noto Sans", Arial, sans-serif; }
+
+/* PANEL */
+.panel{
+  width:360px; background:rgba(255,255,255,0.95); backdrop-filter: blur(8px);
+  padding:14px; box-shadow:2px 0 18px rgba(0,0,0,0.15); z-index: 1000;
+  overflow-y:auto; transition: transform 0.25s ease;
+}
+
+#map { flex:1; height:100%; position: relative; transition: margin-left 0.25s ease; }
+
+@media (min-width: 768px){
+  #map { position: absolute !important; top: 0; bottom: 0; right: 0; left: 360px !important; }
+  .panel { position: absolute; top: 0; left: 0; width: 360px; height: 100vh; }
+}
+
+@media (max-width: 768px){
+  body { flex-direction: column; }
+  #map { height: 100vh; width: 100%; position: absolute !important; }
+  .panel { position: fixed; bottom: 0; left: 0; right: 0; width: 100%; height: 70vh; border-radius: 16px 16px 0 0; transform: translateY(0); }
+  #toggleBtn { display: none; }
+}
+
+#toggleBtn{
+  position: fixed; top: 20px; left: 10px; width: 36px; height: 36px; background: #fff;
+  border: 1px solid #ddd; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 9999;
+}
+
+.row{margin-top:6px}
+.small{font-size:11px; opacity:0.8}
+hr{border:none;border-top:1px solid #eee;margin:10px 0}
+
+/* LABEL FIXES */
+.state-label div, .ut-label div {
+  pointer-events:none; white-space:nowrap; text-align:center;
+  font-weight:700; font-size:11px; color:#111;
+  text-shadow: 0 0 4px white, 0 0 4px white;
+}
+</style>
+</head>
+
+<body>
+<div id="toggleBtn">⬅</div>
+<div class="panel" id="panel">
+  <div class="panel-handle"></div>
+  <b>🇮🇳 Delimitation Reality Dashboard</b>
+  
+  <div class="row">
+    <select id="mode" onchange="updateMap(true)" style="width:100%;">
+      <option value="current">Current (543)</option>
+      <option value="uniform">Uniform (850)</option>
+      <option value="y2011">2011 Census</option>
+      <option value="y2026">2026 Projection</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <select id="lang" onchange="setLang(this.value)" style="width:100%;">
+      <option value="en">English</option>
+      <option value="te">తెలుగు</option>
+    </select>
+  </div>
+
+  <hr><div id="totals"></div><div id="modelName" class="small"></div>
+  <hr><b id="shareTitle">📊 Share</b><div id="share" class="small"></div>
+  <hr><b id="voteTitle">⚖️ Vote Weight</b><div id="vote" class="small"></div>
+  <hr><b id="topMoversTitle">🏆 Top Movers</b><div id="topMovers" class="small"></div>
+  <hr><b id="validationTitle">🧪 Validation</b><div id="validation" class="small"></div>
+  <hr><div id="legendBox" class="small"></div>
+</div>
+
+<div id="map"></div>
+
+<script>
+// ================== DATA & MODELS ==================
+const CURRENT = {"Uttar Pradesh":80,"Maharashtra":48,"West Bengal":42,"Bihar":40,"Tamil Nadu":39,"Madhya Pradesh":29,"Karnataka":28,"Gujarat":26,"Andhra Pradesh":25,"Rajasthan":25,"Odisha":21,"Kerala":20,"Telangana":17,"Assam":14,"Jharkhand":14,"Punjab":13,"Chhattisgarh":11,"Haryana":10,"Delhi":7,"Jammu and Kashmir":5,"Himachal Pradesh":4,"Uttarakhand":5,"Goa":2,"Tripura":2,"Meghalaya":2,"Manipur":2,"Nagaland":1,"Arunachal Pradesh":2,"Mizoram":1,"Sikkim":1,"Andaman and Nicobar Islands":1,"Chandigarh":1,"Ladakh":1,"Lakshadweep":1,"Puducherry":1,"Dadra and Nagar Haveli and Daman and Diu":2};
+const POP_2011 = {"Uttar Pradesh":199812341,"Maharashtra":112374333,"Bihar":104099452,"West Bengal":91276115,"Madhya Pradesh":72626809,"Tamil Nadu":72147030,"Rajasthan":68548437,"Karnataka":61095297,"Gujarat":60439692,"Andhra Pradesh":49577103,"Telangana":35193978,"Odisha":41974218,"Kerala":33406061,"Jharkhand":32988134,"Assam":31205576,"Punjab":27743338,"Chhattisgarh":25545198,"Haryana":25351462,"Himachal Pradesh":6864602,"Uttarakhand":10086292,"Goa":1458545,"Tripura":3673917,"Meghalaya":2966889,"Manipur":2855794,"Nagaland":1978502,"Arunachal Pradesh":1383727,"Mizoram":1097206,"Sikkim":610577};
+const POP_UT = {"Delhi":16787941, "Jammu and Kashmir":12541302,"Ladakh":274000,"Chandigarh":1055450,"Puducherry":1247953,"Lakshadweep":64473,"Andaman and Nicobar Islands":380581,"Dadra and Nagar Haveli and Daman and Diu":586956};
+const SOUTH = ["Tamil Nadu","Kerala","Karnataka","Andhra Pradesh","Telangana"];
+
+function allocate(pop, total) {
+    let sum = Object.values(pop).reduce((a, b) => a + b, 0);
+    let base = {}, rem = [];
+    for (let s in pop) {
+        let q = (pop[s] / sum) * total;
+        base[s] = Math.floor(q);
+        rem.push({ s, frac: q - base[s] });
+    }
+    let left = total - Object.values(base).reduce((a, b) => a + b, 0);
+    rem.sort((a, b) => b.frac - a.frac);
+    for (let i = 0; i < left; i++) base[rem[i].s]++;
+    return base;
+}
+
+function buildUTModel(popBase) {
+    let ratio = Object.values(popBase).reduce((a, b) => a + b, 0) / 815;
+    let base = {}; let used = 0; let rem = [];
+    for (let s in POP_UT) { base[s] = CURRENT[s] || 1; used += base[s]; rem.push({ s, f: POP_UT[s] / ratio }); }
+    let left = 35 - used;
+    rem.sort((a, b) => b.f - a.f);
+    for (let i = 0; i < left; i++) base[rem[i % rem.length].s]++;
+    return base;
+}
+
+const UNIFORM = Object.assign(allocate(CURRENT, 815), buildUTModel(POP_2011));
+const MODEL_2011 = Object.assign(allocate(POP_2011, 815), buildUTModel(POP_2011));
+
+const POP_2026 = {};
+for (let s in POP_2011) {
+    let g = (s === "Uttar Pradesh" || s === "Bihar") ? 1.25 : (s === "Tamil Nadu" || s === "Kerala") ? 1.08 : 1.18;
+    POP_2026[s] = Math.round(POP_2011[s] * g);
+}
+const MODEL_2026 = Object.assign(allocate(POP_2026, 815), buildUTModel(POP_2026));
+
+// ================== LANGUAGE ==================
+const TELUGU = {"Uttar Pradesh":"ఉత్తర ప్రదేశ్","Maharashtra":"మహారాష్ట్ర","West Bengal":"పశ్చిమ బెంగాల్","Bihar":"బీహార్","Tamil Nadu":"తమిళనాడు","Madhya Pradesh":"మధ్యప్రదేశ్","Karnataka":"కర్ణాటక","Gujarat":"గుజరాత్","Andhra Pradesh":"ఆంధ్ర ప్రదేశ్","Telangana":"తెలంగాణ","Kerala":"కేరళ","Odisha":"ఒడిశా","Rajasthan":"రాజస్థాన్","Punjab":"పంజాబ్","Haryana":"హర్యానా","Delhi":"దిల్లీ","Jammu and Kashmir":"జమ్మూ కాశ్మీర్","Ladakh":"లడఖ్","Assam":"అస్సాం","Jharkhand":"ఝార్ఖండ్","Chhattisgarh":"ఛత్తీస్‌గఢ్","Goa":"గోవా","Tripura":"త్రిపుర","Meghalaya":"మేఘాలయ","Manipur":"మణిపూర్","Nagaland":"నాగాలాండ్","Arunachal Pradesh":"అరుణాచల్ ప్రదేశ్","Mizoram":"మిజోరం","Sikkim":"సిక్కిం","Puducherry":"పుదుచ్చేరి","Lakshadweep":"లక్షద్వీప్","Chandigarh":"చండీగఢ్","Andaman and Nicobar Islands":"అండమాన్ నికోబార్ దీవులు","Dadra and Nagar Haveli and Daman and Diu":"దాద్రా నాగర్ హవేలి & దమన్ దియు"};
+function t(n) { return document.getElementById("lang").value === "te" ? (TELUGU[n] || n) : n; }
+
+// ================== MAP & LABELS ==================
+const map = L.map('map', {zoomControl:true, attributionControl:false}).setView([22.5, 80], 5);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+let geoLayer, labelLayer = L.layerGroup().addTo(map), utLayer = L.layerGroup().addTo(map);
+
+const UT_BOX={"Delhi":[[28.4,76.9],[28.9,77.5]],"Chandigarh":[[30.6,76.7],[30.8,76.9]],"Puducherry":[[11.8,79.7],[12.0,80.0]],"Lakshadweep":[[10.4,72.5],[10.8,72.8]],"Andaman and Nicobar Islands":[[10,92],[13,94]],"Ladakh":[[33.5,76],[35.5,79]],"Dadra and Nagar Haveli and Daman and Diu":[[20,72.8],[20.4,73.2]]};
+
+function normalizeName(n) {
+    const m = { "Jammu & Kashmir": "Jammu and Kashmir", "NCT of Delhi": "Delhi", "Andaman & Nicobar Islands": "Andaman and Nicobar Islands", "Orissa": "Odisha" };
+    return m[n] || (n || "").trim();
+}
+
+function updateMap() {
+    const mode = document.getElementById("mode").value;
+    const data = mode === "current" ? CURRENT : mode === "uniform" ? UNIFORM : mode === "y2011" ? MODEL_2011 : MODEL_2026;
+    const baseline = mode === "uniform" ? CURRENT : UNIFORM;
+
+    // 1. Clear Labels first to prevent duplication
+    labelLayer.clearLayers();
+    utLayer.clearLayers();
+
+    geoLayer.eachLayer(l => {
+        let s = normalizeName(l.feature.properties.ST_NM || l.feature.properties.NAME_1);
+        let val = data[s] || 0;
+        let bVal = baseline[s] || 0;
+        let diff = val - bVal;
+
+        // Polygon style
+        l.setStyle({
+            fillColor: `hsl(${Math.abs(s.length * 40) % 360}, 50%, 75%)`,
+            fillOpacity: 0.8, weight: 2,
+            color: diff > 0 ? "#00c853" : diff < 0 ? "#1e88e5" : "#999"
+        });
+
+        // Hover Tooltip
+        l.bindTooltip(`<b>${t(s)}</b><br>Seats: ${val}<br>Change: ${diff > 0 ? '+' : ''}${diff}`, { sticky: true });
+
+        // Add Label Marker
+        let center = l.getBounds().getCenter();
+        L.marker(center, {
+            icon: L.divIcon({ className: 'state-label', html: `<div>${t(s)}<br>${val}</div>` }),
+            interactive: false
+        }).addTo(labelLayer);
+    });
+
+    // Handle UT Boxes
+    for (let s in UT_BOX) {
+        let val = data[s] || 0;
+        L.rectangle(UT_BOX[s], { color: "#333", weight: 1, fillOpacity: 0.7 }).addTo(utLayer)
+         .bindTooltip(`<b>${t(s)}</b>: ${val}`);
+        
+        let utCenter = [(UT_BOX[s][0][0] + UT_BOX[s][1][0]) / 2, (UT_BOX[s][0][1] + UT_BOX[s][1][1]) / 2];
+        L.marker(utCenter, {
+            icon: L.divIcon({ className: 'ut-label', html: `<div>${t(s).substring(0,3)}<br>${val}</div>` }),
+            interactive: false
+        }).addTo(utLayer);
+    }
+
+    // Update Sidebar
+    document.getElementById("totals").innerHTML = `<b>Total:</b> ${Object.values(data).reduce((a,b)=>a+b,0)}`;
+    document.getElementById("legendBox").innerHTML = `🟢 Gain vs ${mode==="uniform"?'Current':'Uniform'}<br>🔵 Loss vs ${mode==="uniform"?'Current':'Uniform'}`;
+}
+
+// ================== INIT & UI ==================
+fetch('india_states.geojson').then(r => r.json()).then(g => {
+    geoLayer = L.geoJSON(g).addTo(map);
+    updateMap();
+});
+
+function setLang(l) { 
+    document.body.classList.toggle("lang-te", l === "te");
+    updateMap(); 
+}
+
+const toggleBtn = document.getElementById("toggleBtn");
+const panel = document.getElementById("panel");
+toggleBtn.onclick = () => {
+    let isHidden = panel.style.transform === "translateX(-100%)";
+    panel.style.transform = isHidden ? "translateX(0)" : "translateX(-100%)";
+    document.getElementById("map").style.left = isHidden ? "360px" : "0";
+    toggleBtn.innerHTML = isHidden ? "⬅" : "➡";
+    setTimeout(() => map.invalidateSize(), 300);
+};
+</script>
+</body>
+</html>
