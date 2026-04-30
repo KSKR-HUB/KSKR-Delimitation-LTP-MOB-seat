@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Telugu:wght@400;600&display=swap" rel="stylesheet">
+<title>Delimitation Reality Dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+body { margin:0; font-family: Arial, sans-serif; display:flex; height:100vh; overflow:hidden; }
+body.lang-te { font-family: "Noto Sans Telugu", sans-serif; }
+
+/* LEFT PANEL */
+.panel {
+  width:340px; background:rgba(255,255,255,0.94); backdrop-filter: blur(8px);
+  padding:14px; border-right:1px solid #ddd; font-size:13px;
+  overflow-y:auto; z-index:1001; transition: transform 0.3s ease;
+}
+
+/* MOBILE HANDLING */
+@media (max-width: 768px){
+  body { flex-direction: column; }
+  .panel {
+    position: fixed; bottom: 0; left: 0; right: 0; width: 100%; height: 70vh;
+    border-radius: 16px 16px 0 0; transform: translateY(calc(70vh - 60px));
+  }
+  .panel-handle { width: 40px; height: 5px; background: #ccc; margin: 0 auto 10px; border-radius: 10px; }
+  #toggleBtn { display: none; }
+}
+
+#map { flex-grow:1; position:relative; background: #f8f9fa; }
+
+/* ANIMATIONS: GLOW & PULSE */
+.poly-gainer { animation: polyGlow 2s infinite alternate ease-in-out; }
+@keyframes polyGlow {
+  0% { filter: drop-shadow(0 0 2px #00c853); }
+  100% { filter: drop-shadow(0 0 12px #00c853) brightness(1.1); }
+}
+
+.top-mover-gainer {
+  animation: labelPulse 1.5s infinite alternate ease-in-out;
+  background: white; border: 2px solid #00c853; border-radius: 6px; padding: 2px 5px;
+}
+@keyframes labelPulse {
+  0% { transform: scale(1); box-shadow: 0 0 2px rgba(0,200,83,0.2); }
+  100% { transform: scale(1.1); box-shadow: 0 0 15px rgba(0,200,83,0.6); }
+}
+
+#toggleBtn {
+  position: fixed; top: 20px; left: 10px; width: 35px; height: 35px;
+  background: #fff; border: 1px solid #ddd; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 1002; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+body.panel-collapsed #panel { transform: translateX(-100%); }
+body.panel-collapsed #map { margin-left: -340px; } /* Adjust map if needed */
+
+.row { margin-top:10px; }
+.small { font-size:11px; opacity:0.8; }
+.badge { display:inline-block; padding:2px 6px; border-radius:4px; background:#eee; font-weight:bold; }
+hr { border:none; border-top:1px solid #eee; margin:12px 0; }
+</style>
+</head>
+
+<body>
+<div id="toggleBtn">⬅</div>
+<div class="panel" id="panel">
+  <div class="panel-handle"></div>
+  <b id="dashTitle">🇮🇳 Delimitation Reality Dashboard</b>
+
+  <div class="row">
+    <select id="mode" onchange="updateMap()">
+      <option value="current" id="opt-current">current model (1971 census)</option>
+      <option value="uniform" id="opt-uniform" selected>Uniform model (55% increase)</option>
+      <option value="y2011" id="opt-2011">2011 Census</option>
+      <option value="y2026" id="opt-2026">2026 Projection</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <select id="lang" onchange="setLang(this.value)">
+      <option value="en">English</option>
+      <option value="te">తెలుగు</option>
+    </select>
+  </div>
+
+  <hr><div id="totals"></div>
+  <hr><b id="moversTitle">🏆 Top Movers</b><div id="moversArea"></div>
+  <hr><b id="voteTitle">⚖️ Vote Weight</b><div id="voteArea" class="small"></div>
+  <hr><div id="validation" class="small"></div>
+</div>
+
+<div id="map"></div>
+
+<script>
+// --- DATA & TRANSLATION ---
+const TELUGU = {
+  "Uttar Pradesh":"ఉత్తర ప్రదేశ్","Maharashtra":"మహారాష్ట్ర","West Bengal":"పశ్చిమ బెంగాల్",
+  "Bihar":"బీహార్","Tamil Nadu":"తమిళనాడు","Madhya Pradesh":"మధ్యప్రదేశ్",
+  "Karnataka":"కర్ణాటక","Gujarat":"గుజరాత్","Andhra Pradesh":"ఆంధ్ర ప్రదేశ్",
+  "Telangana":"తెలంగాణ","Kerala":"కేరళ","Odisha":"ఒడిశా","Rajasthan":"రాజస్థాన్",
+  "Punjab":"పంజాబ్","Haryana":"హర్యానా","Delhi":"దిల్లీ","Jammu and Kashmir":"జమ్మూ కాశ్మీర్",
+  "Ladakh":"లడఖ్","Assam":"అస్సాం","Jharkhand":"ఝార్ఖండ్","Chhattisgarh":"ఛత్తీస్‌గఢ్",
+  "Goa":"గోవా","Tripura":"త్రిపుర","Meghalaya":"మేఘాలయ","Manipur":"మణిపూర్",
+  "Nagaland":"నాగాలాండ్","Arunachal Pradesh":"అరుణాచల్ ప్రదేశ్","Mizoram":"మిజోరం",
+  "Sikkim":"సిక్కిం","Puducherry":"పుదుచ్చేరి","Lakshadweep":"లక్షద్వీప్",
+  "Chandigarh":"చండీగఢ్","Andaman and Nicobar Islands":"అండమాన్ నికోబార్ దీవులు",
+  "Himachal Pradesh":"హిమాచల్ ప్రదేశ్","Uttarakhand":"ఉత్తరాఖండ్"
+};
+
+const UI = {
+  en: {
+    total: "Total Seats", gainers: "Top Gainers", losers: "Top Losers",
+    opt_current: "Current Model (1971)", opt_uniform: "Uniform Model (+55%)",
+    opt_2011: "2011 Census", opt_2026: "2026 Projection", validation: "Validation"
+  },
+  te: {
+    total: "మొత్తం సీట్లు", gainers: "లాభపడిన రాష్ట్రాలు", losers: "నష్టపోయిన రాష్ట్రాలు",
+    opt_current: "ప్రస్తుత మోడల్ (1971)", opt_uniform: "సమాన పంపిణీ (+55%)",
+    opt_2011: "2011 లెక్కలు", opt_2026: "2026 అంచనా", validation: "ధృవీకరణ"
+  }
+};
+
+const CURRENT = {"Uttar Pradesh":80,"Maharashtra":48,"West Bengal":42,"Bihar":40,"Tamil Nadu":39,"Madhya Pradesh":29,"Karnataka":28,"Gujarat":26,"Andhra Pradesh":25,"Rajasthan":25,"Odisha":21,"Kerala":20,"Telangana":17,"Assam":14,"Jharkhand":14,"Punjab":13,"Chhattisgarh":11,"Haryana":10,"Delhi":7,"Jammu and Kashmir":5,"Himachal Pradesh":4,"Uttarakhand":5,"Goa":2,"Tripura":2,"Meghalaya":2,"Manipur":2,"Nagaland":1,"Arunachal Pradesh":2,"Mizoram":1,"Sikkim":1,"Andaman and Nicobar Islands":1,"Chandigarh":1,"Ladakh":1,"Lakshadweep":1,"Puducherry":1,"Dadra and Nagar Haveli and Daman and Diu":2};
+const UNIFORM = {"Uttar Pradesh":124,"Maharashtra":75,"West Bengal":65,"Bihar":62,"Tamil Nadu":61,"Madhya Pradesh":45,"Karnataka":43,"Gujarat":40,"Andhra Pradesh":39,"Rajasthan":39,"Odisha":33,"Kerala":31,"Telangana":26,"Assam":22,"Jharkhand":22,"Punjab":20,"Chhattisgarh":17,"Haryana":16,"Delhi":15,"Jammu and Kashmir":11,"Himachal Pradesh":6,"Uttarakhand":8,"Goa":3,"Tripura":3,"Meghalaya":3,"Manipur":3,"Nagaland":2,"Arunachal Pradesh":3,"Mizoram":2,"Sikkim":2,"Andaman and Nicobar Islands":1,"Chandigarh":2,"Ladakh":1,"Lakshadweep":1,"Puducherry":2,"Dadra and Nagar Haveli and Daman and Diu":3};
+const MODEL_2011 = {"Uttar Pradesh":145,"Maharashtra":82,"West Bengal":66,"Bihar":76,"Tamil Nadu":52,"Madhya Pradesh":53,"Karnataka":44,"Gujarat":44,"Andhra Pradesh":36,"Rajasthan":50,"Odisha":31,"Kerala":24,"Telangana":26,"Assam":23,"Jharkhand":24,"Punjab":20,"Chhattisgarh":19,"Haryana":18,"Delhi":12,"Jammu and Kashmir":9,"Himachal Pradesh":5,"Uttarakhand":7,"Goa":1,"Tripura":3,"Meghalaya":2,"Manipur":2,"Nagaland":1,"Arunachal Pradesh":1,"Mizoram":1,"Sikkim":1,"Andaman and Nicobar Islands":1,"Chandigarh":1,"Ladakh":1,"Lakshadweep":1,"Puducherry":1,"Dadra and Nagar Haveli and Daman and Diu":1};
+const MODEL_2026 = {"Uttar Pradesh":166,"Maharashtra":82,"West Bengal":64,"Bihar":87,"Tamil Nadu":45,"Madhya Pradesh":54,"Karnataka":42,"Gujarat":43,"Andhra Pradesh":34,"Rajasthan":52,"Odisha":29,"Kerala":21,"Telangana":24,"Assam":22,"Jharkhand":24,"Punjab":19,"Chhattisgarh":18,"Haryana":17,"Delhi":15,"Jammu and Kashmir":11,"Himachal Pradesh":5,"Uttarakhand":6,"Goa":1,"Tripura":2,"Meghalaya":2,"Manipur":2,"Nagaland":1,"Arunachal Pradesh":1,"Mizoram":1,"Sikkim":1,"Andaman and Nicobar Islands":1,"Chandigarh":2,"Ladakh":1,"Lakshadweep":1,"Puducherry":2,"Dadra and Nagar Haveli and Daman and Diu":0};
+
+function t(name){
+  let lang = document.getElementById("lang").value;
+  return (lang === "te") ? (TELUGU[name] || name) : name;
+}
+
+// --- MAP INIT ---
+const map = L.map('map', {attributionControl: false}).setView([22, 78], 5);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+let geoLayer, labelLayer = L.layerGroup().addTo(map);
+
+fetch('india_states.geojson').then(r=>r.json()).then(g=>{
+  geoLayer = L.geoJSON(g, {
+    style: { color: "#444", weight: 1, fillColor: "#ccc", fillOpacity: 0.6 }
+  }).addTo(map);
+  updateMap();
+});
+
+function normalizeName(n){
+  const map = {"NCT of Delhi":"Delhi", "Jammu & Kashmir":"Jammu and Kashmir"};
+  return map[n] || n;
+}
+
+const LABEL_CENTERS = { "Uttarakhand": [30.1, 79.2], "Himachal Pradesh": [31.8, 77.2], "Uttar Pradesh": [27, 80.5], "Andaman and Nicobar Islands": [11, 93] };
+
+function updateMap() {
+  const mode = document.getElementById("mode").value;
+  const lang = document.getElementById("lang").value;
+  const u = UI[lang];
+  const data = (mode==="current")?CURRENT:(mode==="uniform")?UNIFORM:(mode==="y2011")?MODEL_2011:MODEL_2026;
+  const baseline = (mode==="uniform")?CURRENT:UNIFORM;
+
+  // Translate Dropdown Options
+  document.getElementById("opt-current").text = u.opt_current;
+  document.getElementById("opt-uniform").text = u.opt_uniform;
+  document.getElementById("opt-2011").text = u.opt_2011;
+  document.getElementById("opt-2026").text = u.opt_2026;
+
+  let diffs = [];
+  for(let s in data) {
+    let diff = data[s] - baseline[s];
+    diffs.push({ s, diff });
+  }
+  diffs.sort((a,b) => b.diff - a.diff);
+
+  const topGainers = new Set(diffs.slice(0,3).map(x=>x.s));
+  const topLosers = (mode === "uniform" || mode === "current") ? new Set() : new Set([...diffs].reverse().slice(0,3).filter(x=>x.diff < 0).map(x=>x.s));
+
+  labelLayer.clearLayers();
+  geoLayer.eachLayer(layer => {
+    let s = normalizeName(layer.feature.properties.ST_NM || layer.feature.properties.NAME_1);
+    let val = data[s] || 0;
+    let d = val - baseline[s];
+    let isG = topGainers.has(s);
+    let isL = topLosers.has(s);
+
+    layer.setStyle({
+      fillColor: isG ? "#81c784" : (isL ? "#64b5f6" : "#ddd"),
+      weight: (isG || isL) ? 3 : 1,
+      color: isG ? "#00c853" : (isL ? "#1e88e5" : "#666"),
+      className: isG ? 'poly-gainer' : ''
+    });
+    if(isG || isL) layer.bringToFront();
+
+    let center = LABEL_CENTERS[s] ? L.latLng(LABEL_CENTERS[s]) : layer.getBounds().getCenter();
+    let metricHtml = (isG || isL) ? `<div style="color:${isG?'#00c853':'#1e88e5'}; font-size:11px; font-weight:bold;">${d>0?'🔺':(d<0?'🔻':'')} ${d>0?'+':''}${d}</div>` : "";
+
+    L.marker(center, {
+      icon: L.divIcon({
+        className: 'label',
+        html: `<div class="${isG?'top-mover-gainer':''}" style="text-align:center; min-width:80px;">
+                <div style="font-size:11px; font-weight:600; text-shadow:0 0 3px #fff;">${t(s)}</div>
+                <div style="font-size:13px; font-weight:bold;">${val}</div>
+                ${metricHtml}
+              </div>`
+      })
+    }).addTo(labelLayer);
+  });
+
+  // Panel Stats
+  document.getElementById("totals").innerHTML = `<b>${u.total}:</b> ${Object.values(data).reduce((a,b)=>a+b,0)}`;
+  
+  let moversHtml = `<b>${u.gainers}</b><br>` + diffs.slice(0,3).map(x=>`${t(x.s)} <span style="color:green">▲ +${x.diff}</span>`).join("<br>");
+  // Only show losers if not Uniform/Current model
+  if(topLosers.size > 0) {
+    moversHtml += `<hr><b>${u.losers}</b><br>` + [...diffs].reverse().slice(0,3).map(x=>`${t(x.s)} <span style="color:blue">▼ ${x.diff}</span>`).join("<br>");
+  }
+  document.getElementById("moversArea").innerHTML = moversHtml;
+
+  let upMP = Math.round(200000000 / (data["Uttar Pradesh"] || 1));
+  let klMP = Math.round(35000000 / (data["Kerala"] || 1));
+  document.getElementById("voteArea").innerHTML = `UP MP ≈ ${upMP.toLocaleString()}<br>Kerala MP ≈ ${klMP.toLocaleString()}`;
+  document.getElementById("validation").innerHTML = `${u.validation}: ${Object.values(data).reduce((a,b)=>a+b,0)} / 850 ✔`;
+}
+
+function setLang(l) { localStorage.setItem("lang", l); updateMap(); }
+
+// Desktop Collapse
+document.getElementById("toggleBtn").onclick = function() {
+  document.body.classList.toggle("panel-collapsed");
+  this.innerHTML = document.body.classList.contains("panel-collapsed") ? "➡" : "⬅";
+  setTimeout(() => map.invalidateSize(), 300);
+};
+</script>
+</body>
+</html>
